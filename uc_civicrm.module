@@ -882,10 +882,10 @@ function uc_civicrm_syncronize_status($order) {
   civicrm_initialize();
 
   $search_params = array('invoice_id' => $order->order_id . "_uc", 'return.contact_id' => 1);
-  $result = civicrm_api3('contributon', 'get', $search_params);
+  $result = civicrm_api3('contribution', 'get', $search_params);
 
-  // @TODO Doesn't civicrm_api3 throw exceptions instead of returning
-  // CiviCRM errors?
+  // "Doesn't civicrm_api3 throw exceptions instead of returning
+  // CiviCRM errors?" <- no, that's only if you use getsingle -- @artfulrobot
   if (civicrm_error($result)) {
     watchdog('uc_civicrm', 'uc_civicrm_syncronize_status() returned: %message', array('%message' => $result['error_message']), WATCHDOG_ERROR);
   }
