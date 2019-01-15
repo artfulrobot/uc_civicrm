@@ -18,26 +18,31 @@ function uc_civicrm_help($path = 'admin/help#uc_civicrm') {
 /**
  * Implements hook_civicrm_tabs().
  */
-function uc_civicrm_civicrm_tabs(&$tabs, $cid) {
-  $uid = CRM_Core_BAO_UFMatch::getUFId($cid);
-  if (empty($uid)) {
-    return;
+function uc_civicrm_civicrm_tabset($tabsetName, &$tabs, $context) {
+  if ($tabsetName == 'civicrm/contact/view') {
+    $cid = $context['contact_id'];
+    $uid = CRM_Core_BAO_UFMatch::getUFId($cid);
+    if (empty($uid)) {
+      return;
+    }
+
+    $history = uc_civicrm_contact_transaction($uid, FALSE);
+    $count = count($history['orders']['#rows']);
+
+    $tab = array(
+      'id'     => 'purchases',
+      'class'     => 'livePage',
+      'title'  => t('Purchases'),
+      'count'  => $count,
+      'weight' => 99,
+    );
+
+    if ($count > 0) {
+      $tab['url'] = url("admin/store/civicrm/customer/orders/$uid");
+    }
+    $tabs[] = $tab;
+
   }
-
-  $history = uc_civicrm_contact_transaction($uid, FALSE);
-  $count = count($history['orders']['#rows']);
-
-  $tab = array(
-    'id'     => 'purchases',
-    'title'  => t('Purchases'),
-    'count'  => $count,
-    'weight' => 99,
-  );
-
-  if ($count > 0) {
-    $tab['url'] = url("admin/store/civicrm/customer/orders/$uid");
-  }
-  $tabs[] = $tab;
 
   return $tabs;
 }
@@ -80,7 +85,7 @@ function uc_civicrm_contact_transaction($uid, $snippet = TRUE) {
 
   $output = _uc_civicrm_customer_orders($uid);
   if ($snippet) {
-    print render($output);
+    CRM_Core_Page_AJAX::returnJsonResponse(render($output));
   }
   else {
     return $output;
@@ -320,10 +325,10 @@ function uc_civicrm_action_order_civicrm($order, $is_new = TRUE) {
   else {
     $cid = _uc_civicrm_get_cid($order);
     $params = array(
-      'invoice_id' => $order->order_id . "_uc",
+      'invoice_id' => "Ubercart #{$order->order_id}",
       'return' => 'contact_id'
     );
-    try{
+    try {
       $contribution = civicrm_api3('contribution', 'getsingle', $params);
       $cid = $contribution['contact_id'];
     }
@@ -522,7 +527,7 @@ function _uc_civicrm_add_update_contact($cid, $order) {
     if ($contact_status == 'new' && !$contact_info['values'][$cid]['first_name'] && !$contact_info['values'][$cid]['last_name']) {
       try {
         $result = civicrm_api3('contact', 'create', $contact);
-        $cid = reset(array_keys($result['values']));
+        $cid = current(array_keys($result['values']));
         $name = trim($contact['display_name']);
         $name = !empty($name) ? $contact['display_name'] : $cid;
         $link = l($name, 'civicrm/contact/view', array('query' => array('reset' => 1, 'cid' => $cid)));
@@ -701,8 +706,11 @@ function _uc_civicrm_add_contribution($cid, &$order) {
   _uc_civicrm_create_custom_contribution_fields();
 
   $payments = uc_payment_load_payments($order->order_id);
-  $payment = end($payments);
-  $txn_id = t('Ubercart @oid:@rid', array('@oid' => $order->order_id, '@rid' => $payment->receipt_id));
+  $txn_id = t('Ubercart @oid', array('@oid' => $order->order_id));;
+  if ($payments) {
+    $payment = end($payments);
+    $txn_id = t('Ubercart @oid:@rid', array('@oid' => $order->order_id, '@rid' => $payment->receipt_id));
+  }
 
   // @FIXME Landmine. CiviCRM doesn't seem to accept financial values
   // with precision greater than 2 digits after the decimal.
@@ -973,7 +981,7 @@ function _uc_civicrm_customer_orders($uid) {
         array('data' => format_date($order->created, 'uc_store')),
         array('data' => check_plain($bname)),
         array('data' => check_plain($sname)),
-        array('data' => $item_count['COUNT(*)']),
+        array('data' => $item_count),
         array('data' => array('#theme' => 'uc_price', '#price' => $order->order_total)),
       ),
       'id' => 'order-' . $order->order_id,
