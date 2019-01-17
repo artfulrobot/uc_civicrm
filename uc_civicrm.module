@@ -290,6 +290,15 @@ function uc_civicrm_action_update_contact($order) {
 /**
  * Action called when order updated.
  *
+ * Note from @artfulrobot:
+ * > I think that originally an order would first trigger the "Add to CiviCRM
+ * > on new order" action at checkout, and then may later call this with an
+ * > update to the order status.
+ * >
+ * > However, I observe that this is now being called before that other action
+ * > has, meaning it's first called with is_new = FALSE, and then called again
+ * > with is_new = TRUE.
+ *
  * @param object $order
  *   the order
  *
@@ -302,56 +311,82 @@ function uc_civicrm_action_order_civicrm($order, $is_new = TRUE) {
   if (!civicrm_initialize()) {
     return;
   }
-  if ($is_new) {
+  Civi::log()->info(__FUNCTION__ . " called", ["is_new" => $is_new ? "YES" : "NO", $order]); // xxx
+  try{throw new \Exception("foo");}
+  catch (Exception $e) {
+    Civi::log()->info("backtrace", [$e->getTraceAsString()]); // xxx
+  }
 
-    // Find or create a CiviCRM contact ID for the customer.
-    $cid = _uc_civicrm_get_cid($order);
-    if ($cid === FALSE) {
-      return;
-    }
+  // Find the contact, or create one.
+  $cid = _uc_civicrm_get_cid($order);
+  if ($cid === FALSE) {
+    Civi::log()->error("Error trying to find a contact for the order.", []);//xxx
+    return;
+  }
+  Civi::log()->error("Contact ID found: @cid. If zero, will create new.", ['@cid' => $cid]);//xxx
+  $cid = _uc_civicrm_add_update_contact($cid, $order);
+  if ($cid === FALSE) {
+    Civi::log()->error("Error trying to create/update a contact for the order.", []);// xxx
+    return;
+  }
 
-    $cid = _uc_civicrm_add_update_contact($cid, $order);
-
-    if ($cid === FALSE) {
-      return;
-    }
-
-    // Add the contribution record.
+  Civi::log()->info(__FUNCTION__ . " looking for contribution", []); // xxx
+  $contribution = _uc_civicrm_find_contribution_for_order($order);
+  if (!$contribution) {
+    Civi::log()->info(__FUNCTION__ . " not found, create it now", []); // xxx
+    // No contribution, create it now.
     _uc_civicrm_add_contribution($cid, $order);
+    // Now it should load...
+    $contribution = _uc_civicrm_find_contribution_for_order($order);
+    if (!$contribution) {
+      // Something's really wrong.
+      watchdog('uc_civicrm', 'Error getting newly created contribution for order ' . $order->id, [], WATCHDOG_ERROR);
+      return;
+    }
+    Civi::log()->info(__FUNCTION__ . " OK, got contribution now.", [$contribution]); // xxx
+  }
 
+  try {
+    $params = [
+      'contact_id'             => $cid,
+      'contribution_status_id' => _uc_civicrm_map_contribution_status($order->order_status),
+      'id'                     => $contribution['id'],
+    ];
+    $result = civicrm_api3('contribution', 'create', $params);
+  }
+  catch (Exception $e) {
+    watchdog('uc_civicrm', 'Error updating contribution: ' . $e->getMessage()  . print_r($params, TRUE), array(), WATCHDOG_ERROR);
+  }
+
+  // Finally, if this is called with $is_new, add the contact to the selected group.
+  if ($is_new) {
     // Add this contact to selected groups.
     _uc_civicrm_add_to_groups($cid);
   }
-  else {
-    $cid = _uc_civicrm_get_cid($order);
-    $params = array(
-      'invoice_id' => "Ubercart #{$order->order_id}",
-      'return' => 'contact_id'
-    );
-    try {
-      $contribution = civicrm_api3('contribution', 'getsingle', $params);
-      $cid = $contribution['contact_id'];
-    }
-    catch (Exception $e) {
-      // @TODO figure out why should this exist?
-      _uc_civicrm_add_contribution($cid, $order);
-      watchdog('uc_civicrm', 'Error getting contribution - but we dont know if this matters: ' . $e->getMessage() . print_r($params, TRUE), array(), WATCHDOG_ERROR);
-      return;
-    }
-    try {
-      $params = array(
-        'contact_id' => $cid,
-        'contribution_status_id' => _uc_civicrm_map_contribution_status($order->order_status),
-        'id' => $contribution['id'],
-      );
-      $result = civicrm_api3('contribution', 'create', $params);
-    }
-    catch (Exception $e) {
-      watchdog('uc_civicrm', 'Error creating contribution: ' . $e->getMessage()  . print_r($params, TRUE), array(), WATCHDOG_ERROR);
-    }
-  }
 }
 
+/**
+ * Looks up the singluar CiviCRM Contribution record that matches this Ubercart Order.
+ *
+ * @param Object $order
+ * @param String $return what you want the API to return.
+ *
+ * @return FALSE|Array
+ */
+function _uc_civicrm_find_contribution_for_order($order, $return='contact_id') {
+
+  $params = [
+    'invoice_id' => t('Ubercart #@oid', array('@oid' => $order->order_id)),
+    'return'     => $return,
+  ];
+  try {
+    $contribution = civicrm_api3('contribution', 'getsingle', $params);
+    return $contribution;
+  }
+  catch (Exception $e) {
+    return FALSE;
+  }
+}
 /**
  * Add contact to any specified groups.
  *
@@ -700,13 +735,15 @@ function _uc_civicrm_create_custom_contribution_fields() {
  * make one up and add the contribution.
  */
 function _uc_civicrm_add_contribution($cid, &$order) {
+  Civi::log()->info(__FUNCTION__ . " called", [$cid, $order]); // xxx
   if (!civicrm_initialize()) {
     return;
   }
   _uc_civicrm_create_custom_contribution_fields();
 
   $payments = uc_payment_load_payments($order->order_id);
-  $txn_id = t('Ubercart @oid', array('@oid' => $order->order_id));;
+  $logger = Civi::log()->info("_uc_civicrm_add_contribution called payments:", ['order' => json_encode($order), 'payments' => json_encode($payments)]);
+  $txn_id = t('Ubercart @oid', array('@oid' => $order->order_id));
   if ($payments) {
     $payment = end($payments);
     $txn_id = t('Ubercart @oid:@rid', array('@oid' => $order->order_id, '@rid' => $payment->receipt_id));
@@ -750,6 +787,7 @@ function _uc_civicrm_add_contribution($cid, &$order) {
   );
   try {
     $contribution = civicrm_api3('Contribution', 'create', $params);
+    Civi::log()->info(__FUNCTION__ . " created contribution", [$contribution]); // xxx
   }
   catch (Exception $e) {
     // Log the error, but continue.
@@ -889,7 +927,7 @@ function uc_civicrm_create_activity_form($form_state, $settings = array()) {
 function uc_civicrm_syncronize_status($order) {
   civicrm_initialize();
 
-  $search_params = array('invoice_id' => $order->order_id . "_uc", 'return.contact_id' => 1);
+  $search_params = array('invoice_id' => t('Ubercart #@oid', array('@oid' => $order->order_id)), 'return.contact_id' => 1);
   $result = civicrm_api3('contribution', 'get', $search_params);
 
   // "Doesn't civicrm_api3 throw exceptions instead of returning
