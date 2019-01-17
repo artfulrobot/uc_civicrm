@@ -1,4 +1,6 @@
 <?php
+// Set this to true to fill up your logs :-)
+const UC_CIVICRM_DEBUG = FALSE;
 
 /**
  * @file
@@ -311,29 +313,33 @@ function uc_civicrm_action_order_civicrm($order, $is_new = TRUE) {
   if (!civicrm_initialize()) {
     return;
   }
-  Civi::log()->info(__FUNCTION__ . " called", ["is_new" => $is_new ? "YES" : "NO", $order]); // xxx
-  try{throw new \Exception("foo");}
-  catch (Exception $e) {
-    Civi::log()->info("backtrace", [$e->getTraceAsString()]); // xxx
+  if (UC_CIVICRM_DEBUG) {
+    Civi::log()->info(__FUNCTION__ . " called", ["is_new" => $is_new ? "YES" : "NO", $order]);
   }
 
   // Find the contact, or create one.
   $cid = _uc_civicrm_get_cid($order);
   if ($cid === FALSE) {
-    Civi::log()->error("Error trying to find a contact for the order.", []);//xxx
+    Civi::log()->error("Error trying to find a contact for the order.", []);
     return;
   }
-  Civi::log()->error("Contact ID found: @cid. If zero, will create new.", ['@cid' => $cid]);//xxx
+  if (UC_CIVICRM_DEBUG) {
+    Civi::log()->error("Contact ID found: @cid. If zero, will create new.", ['@cid' => $cid]);
+  }
   $cid = _uc_civicrm_add_update_contact($cid, $order);
   if ($cid === FALSE) {
-    Civi::log()->error("Error trying to create/update a contact for the order.", []);// xxx
+    Civi::log()->error("Error trying to create/update a contact for the order.", []);
     return;
   }
 
-  Civi::log()->info(__FUNCTION__ . " looking for contribution", []); // xxx
+  if (UC_CIVICRM_DEBUG) {
+    Civi::log()->info(__FUNCTION__ . " looking for contribution", []);
+  }
   $contribution = _uc_civicrm_find_contribution_for_order($order);
   if (!$contribution) {
-    Civi::log()->info(__FUNCTION__ . " not found, create it now", []); // xxx
+    if (UC_CIVICRM_DEBUG) {
+      Civi::log()->info(__FUNCTION__ . " not found, create it now", []);
+    }
     // No contribution, create it now.
     _uc_civicrm_add_contribution($cid, $order);
     // Now it should load...
@@ -343,7 +349,9 @@ function uc_civicrm_action_order_civicrm($order, $is_new = TRUE) {
       watchdog('uc_civicrm', 'Error getting newly created contribution for order ' . $order->id, [], WATCHDOG_ERROR);
       return;
     }
-    Civi::log()->info(__FUNCTION__ . " OK, got contribution now.", [$contribution]); // xxx
+    if (UC_CIVICRM_DEBUG) {
+      Civi::log()->info(__FUNCTION__ . " OK, got contribution now.", [$contribution]);
+    }
   }
 
   try {
@@ -735,7 +743,9 @@ function _uc_civicrm_create_custom_contribution_fields() {
  * make one up and add the contribution.
  */
 function _uc_civicrm_add_contribution($cid, &$order) {
-  Civi::log()->info(__FUNCTION__ . " called", [$cid, $order]); // xxx
+  if (UC_CIVICRM_DEBUG) {
+    Civi::log()->info(__FUNCTION__ . " called", [$cid, $order]);
+  }
   if (!civicrm_initialize()) {
     return;
   }
@@ -787,7 +797,9 @@ function _uc_civicrm_add_contribution($cid, &$order) {
   );
   try {
     $contribution = civicrm_api3('Contribution', 'create', $params);
-    Civi::log()->info(__FUNCTION__ . " created contribution", [$contribution]); // xxx
+    if (UC_CIVICRM_DEBUG) {
+      Civi::log()->info(__FUNCTION__ . " created contribution", [$contribution]);
+    }
   }
   catch (Exception $e) {
     // Log the error, but continue.
